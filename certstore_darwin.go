@@ -30,24 +30,38 @@ var (
 	nilSecIdentityRef    C.SecIdentityRef
 	nilSecKeyRef         C.SecKeyRef
 	nilCFAllocatorRef    C.CFAllocatorRef
+	nilCFTypeRef         C.CFTypeRef
 )
 
 // macStore is a bogus type. We have to explicitly open/close the store on
 // windows, so we provide those methods here too.
-type macStore int
+type macStore struct {
+	location StoreLocation
+}
 
 // openStore is a function for opening a macStore.
-func openStore(_ StoreLocation, _ ...StorePermission) (macStore, error) {
-	return macStore(0), nil
+func openStore(location StoreLocation, _ ...StorePermission) (macStore, error) {
+	return macStore{location}, nil
 }
 
 // Identities implements the Store interface.
 func (s macStore) Identities() ([]Identity, error) {
-	query := mapToCFDictionary(map[C.CFTypeRef]C.CFTypeRef{
+	argsMap := map[C.CFTypeRef]C.CFTypeRef{
 		C.CFTypeRef(C.kSecClass):      C.CFTypeRef(C.kSecClassIdentity),
 		C.CFTypeRef(C.kSecReturnRef):  C.CFTypeRef(C.kCFBooleanTrue),
 		C.CFTypeRef(C.kSecMatchLimit): C.CFTypeRef(C.kSecMatchLimitAll),
-	})
+	}
+
+	if s.location == System {
+		k, err := openKeychain("/Library/Keychains/System.keychain")
+		if err != nil {
+			return nil, err
+		}
+
+		argsMap[C.CFTypeRef(C.kSecUseKeychain)] = C.CFTypeRef(k)
+	}
+
+	query := mapToCFDictionary(argsMap)
 	if query == nilCFDictionaryRef {
 		return nil, errors.New("error creating CFDictionary")
 	}
@@ -79,6 +93,19 @@ func (s macStore) Identities() ([]Identity, error) {
 	return idents, nil
 }
 
+// The returned SecKeychainRef, if non-nil, must be released via CFRelease.
+func openKeychain(path string) (C.SecKeychainRef, error) {
+	pathName := C.CString(path)
+	defer C.free(unsafe.Pointer(pathName))
+
+	var kref C.SecKeychainRef
+	if err := osStatusError(C.SecKeychainOpen(pathName, &kref)); err != nil {
+		return kref, err
+	}
+
+	return kref, nil
+}
+
 // Import implements the Store interface.
 func (s macStore) Import(data []byte, password string) error {
 	cdata, err := bytesToCFData(data)
@@ -90,8 +117,14 @@ func (s macStore) Import(data []byte, password string) error {
 	cpass := stringToCFString(password)
 	defer C.CFRelease(C.CFTypeRef(cpass))
 
+	access, err := createAccess("")
+	if err != nil {
+		return err
+	}
+
 	cops := mapToCFDictionary(map[C.CFTypeRef]C.CFTypeRef{
 		C.CFTypeRef(C.kSecImportExportPassphrase): C.CFTypeRef(cpass),
+		C.CFTypeRef(C.kSecImportExportAccess):     C.CFTypeRef(access),
 	})
 	if cops == nilCFDictionaryRef {
 		return errors.New("error creating CFDictionary")
@@ -131,6 +164,19 @@ func (i *macIdentity) Certificate() (*x509.Certificate, error) {
 		return nil, err
 	}
 
+	policy := C.SecPolicyCreateSSL(0, nilCFStringRef)
+
+	var trustRef C.SecTrustRef
+	if err := osStatusError(C.SecTrustCreateWithCertificates(C.CFTypeRef(certRef), C.CFTypeRef(policy), &trustRef)); err != nil {
+		return nil, err
+	}
+	defer C.CFRelease(C.CFTypeRef(trustRef))
+
+	var status C.SecTrustResultType
+	if err := osStatusError(C.SecTrustEvaluate(trustRef, &status)); err != nil {
+		return nil, err
+	}
+
 	crt, err := exportCertRef(certRef)
 	if err != nil {
 		return nil, err
@@ -139,6 +185,58 @@ func (i *macIdentity) Certificate() (*x509.Certificate, error) {
 	i.crt = crt
 
 	return i.crt, nil
+}
+
+// The returned SecAccessRef, if non-nil, must be released via CFRelease.
+func createAccess(label string, trustedApplications ...string) (access C.SecAccessRef, err error) {
+	if len(trustedApplications) == 0 {
+		return
+	}
+
+	// Always prepend with empty string which signifies that we
+	// include a NULL application, which means ourselves.
+	trustedApplications = append([]string{""}, trustedApplications...)
+
+	labelRef := stringToCFString(label)
+
+	var trustedApplicationsRefs []C.CFTypeRef
+	var trustedApplicationRef C.CFTypeRef
+	for _, trustedApplication := range trustedApplications {
+		trustedApplicationRef, err = createTrustedApplication(trustedApplication)
+		if err != nil {
+			return
+		}
+		defer C.CFRelease(C.CFTypeRef(trustedApplicationRef))
+		trustedApplicationsRefs = append(trustedApplicationsRefs, trustedApplicationRef)
+	}
+
+	trustedApplicationsArray := ArrayToCFArray(trustedApplicationsRefs)
+	defer C.CFRelease(C.CFTypeRef(trustedApplicationsArray))
+	errCode := C.SecAccessCreate(labelRef, trustedApplicationsArray, &access)
+	err = osStatusError(errCode)
+	if err != nil {
+		return
+	}
+
+	return access, nil
+}
+
+// The returned SecTrustedApplicationRef, if non-nil, must be released via CFRelease.
+func createTrustedApplication(trustedApplication string) (C.CFTypeRef, error) {
+	var trustedApplicationCStr *C.char
+	if trustedApplication != "" {
+		trustedApplicationCStr = C.CString(trustedApplication)
+		defer C.free(unsafe.Pointer(trustedApplicationCStr))
+	}
+
+	var trustedApplicationRef C.SecTrustedApplicationRef
+	errCode := C.SecTrustedApplicationCreateFromPath(trustedApplicationCStr, &trustedApplicationRef)
+	err := osStatusError(errCode)
+	if err != nil {
+		return nilCFTypeRef, err
+	}
+
+	return C.CFTypeRef(trustedApplicationRef), nil
 }
 
 // CertificateChain implements the Identity interface.
@@ -414,6 +512,31 @@ func stringToCFString(gostr string) C.CFStringRef {
 	defer C.free(unsafe.Pointer(cstr))
 
 	return C.CFStringCreateWithCString(nilCFAllocatorRef, cstr, C.kCFStringEncodingUTF8)
+}
+
+// ArrayToCFArray will return a CFArrayRef and if non-nil, must be released with
+// Release(ref).
+func ArrayToCFArray(a []C.CFTypeRef) C.CFArrayRef {
+	var values []unsafe.Pointer
+	for _, value := range a {
+		values = append(values, unsafe.Pointer(value))
+	}
+	numValues := len(values)
+	var valuesPointer *unsafe.Pointer
+	if numValues > 0 {
+		valuesPointer = &values[0]
+	}
+	return C.CFArrayCreate(nilCFAllocatorRef, valuesPointer, C.CFIndex(numValues), &C.kCFTypeArrayCallBacks)
+}
+
+// cfArrayToArray converts a CFArrayRef to an array of CFTypes.
+func cfArrayToArray(cfArray C.CFArrayRef) (a []C.CFTypeRef) {
+	count := C.CFArrayGetCount(cfArray)
+	if count > 0 {
+		a = make([]C.CFTypeRef, count)
+		C.CFArrayGetValues(cfArray, C.CFRange{0, count}, (*unsafe.Pointer)(unsafe.Pointer(&a[0])))
+	}
+	return
 }
 
 // mapToCFDictionary converts a Go map[C.CFTypeRef]C.CFTypeRef to a
