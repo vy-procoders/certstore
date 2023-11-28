@@ -1,5 +1,5 @@
-//go:build ios
-// +build ios
+//go:build !ios
+// +build !ios
 
 package certstore
 
@@ -89,7 +89,30 @@ func (s macStore) Identities() ([]Identity, error) {
 
 // Import implements the Store interface.
 func (s macStore) Import(data []byte, password string) error {
-	return errors.New("import is not supported on iOS")
+	cdata, err := bytesToCFData(data)
+	if err != nil {
+		return err
+	}
+	defer C.CFRelease(C.CFTypeRef(cdata))
+
+	cpass := stringToCFString(password)
+	defer C.CFRelease(C.CFTypeRef(cpass))
+
+	cops := mapToCFDictionary(map[C.CFTypeRef]C.CFTypeRef{
+		C.CFTypeRef(C.kSecImportExportPassphrase): C.CFTypeRef(cpass),
+	})
+	if cops == nilCFDictionaryRef {
+		return errors.New("error creating CFDictionary")
+	}
+	defer C.CFRelease(C.CFTypeRef(cops))
+
+	var cret C.CFArrayRef
+	if err := osStatusError(C.SecPKCS12Import(cdata, cops, &cret)); err != nil {
+		return err
+	}
+	defer C.CFRelease(C.CFTypeRef(cret))
+
+	return nil
 }
 
 // Close implements the Store interface.
@@ -191,12 +214,12 @@ func (i *macIdentity) CertificateChain() ([]*x509.Certificate, error) {
 
 	for j := C.CFIndex(0); j < nchain; j++ {
 		// TODO: do we need to release these?
-		chainCertref := C.SecTrustGetCertificateAtIndex(trustRef, j)
+		chainCertref := C.SecTrustGetCertificateAtIndex(trustRef, i)
 		if chainCertref == nilSecCertificateRef {
 			return nil, errors.New("nil certificate in chain")
 		}
 
-		chainCert, err := i.exportCertRef(chainCertref)
+		chainCert, err := j.exportCertRef(chainCertref)
 		if err != nil {
 			return nil, err
 		}
