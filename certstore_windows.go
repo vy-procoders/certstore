@@ -241,6 +241,10 @@ func (i *winIdentity) Certificate() (*x509.Certificate, error) {
 	return exportCertCtx(i.chain[0])
 }
 
+func (i *winIdentity) SetLogger(logger Logger) {
+	// TODO
+}
+
 // CertificateChain implements the Identity interface.
 func (i *winIdentity) CertificateChain() ([]*x509.Certificate, error) {
 	var (

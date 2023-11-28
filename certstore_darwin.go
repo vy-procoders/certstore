@@ -151,9 +151,7 @@ type macIdentity struct {
 	crt   *x509.Certificate
 	chain []*x509.Certificate
 
-	logger interface {
-		Infof(format string, args ...interface{})
-	}
+	logger Logger
 }
 
 func newMacIdentity(ref C.SecIdentityRef) *macIdentity {
@@ -161,9 +159,7 @@ func newMacIdentity(ref C.SecIdentityRef) *macIdentity {
 	return &macIdentity{ref: ref}
 }
 
-func (i *macIdentity) SetLogger(logger interface {
-	Infof(format string, args ...interface{})
-}) {
+func (i *macIdentity) SetLogger(logger Logger) {
 	i.logger = logger
 }
 

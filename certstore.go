@@ -68,4 +68,11 @@ type Identity interface {
 
 	// Close any manually managed memory held by the Identity.
 	Close()
+
+	// SetLogger sets the logger for the identity.
+	SetLogger(logger Logger)
+}
+
+type Logger interface {
+	Infof(format string, args ...interface{})
 }
