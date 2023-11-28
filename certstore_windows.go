@@ -104,6 +104,8 @@ func openStore(location StoreLocation, permissions ...StorePermission) (*winStor
 	return &winStore{store}, nil
 }
 
+func (s *winStore) SetLogger(logger Logger) {}
+
 // Identities implements the Store interface.
 func (s *winStore) Identities() ([]Identity, error) {
 	var (
