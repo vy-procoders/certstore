@@ -150,6 +150,10 @@ type macIdentity struct {
 	cref  C.SecCertificateRef
 	crt   *x509.Certificate
 	chain []*x509.Certificate
+
+	logger interface {
+		Infof(format string, args ...interface{})
+	}
 }
 
 func newMacIdentity(ref C.SecIdentityRef) *macIdentity {
@@ -157,31 +161,52 @@ func newMacIdentity(ref C.SecIdentityRef) *macIdentity {
 	return &macIdentity{ref: ref}
 }
 
+func (i *macIdentity) SetLogger(logger interface {
+	Infof(format string, args ...interface{})
+}) {
+	i.logger = logger
+}
+
+func (i *macIdentity) log(format string, args ...interface{}) {
+	if i.logger != nil {
+		i.logger.Infof(format, args...)
+	}
+}
+
 // Certificate implements the Identity interface.
 func (i *macIdentity) Certificate() (*x509.Certificate, error) {
+	i.log("getting certificate for identity %v", i)
 	certRef, err := i.getCertRef()
 	if err != nil {
 		return nil, err
 	}
 
+	i.log("got certificate ref %v creating policy", certRef)
 	policy := C.SecPolicyCreateSSL(0, nilCFStringRef)
 
+	i.log("creating trust")
 	var trustRef C.SecTrustRef
 	if err := osStatusError(C.SecTrustCreateWithCertificates(C.CFTypeRef(certRef), C.CFTypeRef(policy), &trustRef)); err != nil {
+		i.log("error creating trust: %v", err)
 		return nil, err
 	}
 	defer C.CFRelease(C.CFTypeRef(trustRef))
 
+	i.log("evaluating trust")
 	var status C.SecTrustResultType
 	if err := osStatusError(C.SecTrustEvaluate(trustRef, &status)); err != nil {
+		i.log("error evaluating trust: %v", err)
 		return nil, err
 	}
 
-	crt, err := exportCertRef(certRef)
+	i.log("exporting certificate from trust")
+	crt, err := i.exportCertRef(certRef)
 	if err != nil {
+		i.log("error exporting certificate from trust: %v", err)
 		return nil, err
 	}
 
+	i.log("setting certificate %v", crt)
 	i.crt = crt
 
 	return i.crt, nil
@@ -275,7 +300,7 @@ func (i *macIdentity) CertificateChain() ([]*x509.Certificate, error) {
 			return nil, errors.New("nil certificate in chain")
 		}
 
-		chainCert, err := exportCertRef(chainCertref)
+		chainCert, err := i.exportCertRef(chainCertref)
 		if err != nil {
 			return nil, err
 		}
@@ -350,29 +375,35 @@ func (i *macIdentity) Public() crypto.PublicKey {
 		return nil
 	}
 
+	i.log("returning public key %v", cert.PublicKey)
 	return cert.PublicKey
 }
 
 // Sign implements the crypto.Signer interface.
 func (i *macIdentity) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
+	i.log("signing digest %v", digest)
 	hash := opts.HashFunc()
 
 	if len(digest) != hash.Size() {
+		i.log("bad digest for hash")
 		return nil, errors.New("bad digest for hash")
 	}
 
 	kref, err := i.getKeyRef()
+	i.log("got key ref %v %v", kref, err)
 	if err != nil {
 		return nil, err
 	}
 
 	cdigest, err := bytesToCFData(digest)
+	i.log("got cdigest %v %v", cdigest, err)
 	if err != nil {
 		return nil, err
 	}
 	defer C.CFRelease(C.CFTypeRef(cdigest))
 
 	algo, err := i.getAlgo(opts)
+	i.log("got algo %v %v", algo, err)
 	if err != nil {
 		return nil, err
 	}
@@ -380,6 +411,7 @@ func (i *macIdentity) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts
 	// sign the digest
 	var cerr C.CFErrorRef
 	csig := C.SecKeyCreateSignature(kref, algo, cdigest, &cerr)
+	i.log("got csig %v %v", csig, cerr)
 
 	if err := cfErrorError(cerr); err != nil {
 		defer C.CFRelease(C.CFTypeRef(cerr))
@@ -388,13 +420,16 @@ func (i *macIdentity) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts
 	}
 
 	if csig == nilCFDataRef {
+		i.log("nil signature from SecKeyCreateSignature")
 		return nil, errors.New("nil signature from SecKeyCreateSignature")
 	}
 
 	defer C.CFRelease(C.CFTypeRef(csig))
 
+	i.log("converting csig to bytes")
 	sig := cfDataToBytes(csig)
 
+	i.log("returning signature %v", sig)
 	return sig, nil
 }
 
@@ -490,15 +525,24 @@ func (i *macIdentity) getCertRef() (C.SecCertificateRef, error) {
 }
 
 // exportCertRef gets a *x509.Certificate for the given SecCertificateRef.
-func exportCertRef(certRef C.SecCertificateRef) (*x509.Certificate, error) {
+func (i *macIdentity) exportCertRef(certRef C.SecCertificateRef) (*x509.Certificate, error) {
+	i.log("exporting certificate ref %v", certRef)
 	derRef := C.SecCertificateCopyData(certRef)
+
+	i.log("got derRef %v", derRef)
 	if derRef == nilCFDataRef {
+		i.log("error getting certificate from identity derRef != nilCFDataRef")
 		return nil, errors.New("error getting certificate from identity")
 	}
 	defer C.CFRelease(C.CFTypeRef(derRef))
 
+	i.log("converting derRef to bytes")
 	der := cfDataToBytes(derRef)
+
+	i.log("parsing certificate")
 	crt, err := x509.ParseCertificate(der)
+
+	i.log("parsed certificate %v %v", crt, err)
 	if err != nil {
 		return nil, err
 	}
