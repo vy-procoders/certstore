@@ -148,6 +148,8 @@ func (i *macIdentity) log(format string, args ...interface{}) {
 func (i *macIdentity) Certificate() (*x509.Certificate, error) {
 	i.log("getting certificate for identity %v", i)
 	certRef, err := i.getCertRef()
+
+	i.log("got certificate ref %v %v", certRef, err)
 	if err != nil {
 		return nil, err
 	}
@@ -429,15 +431,21 @@ func (i *macIdentity) getKeyRef() (C.SecKeyRef, error) {
 
 // getCertRef gets the SecCertificateRef for this identity's certificate.
 func (i *macIdentity) getCertRef() (C.SecCertificateRef, error) {
+	i.log("getting certificate ref for identity %v", i)
 	if i.cref != nilSecCertificateRef {
+		i.log("cref != nilSecCertificateRef")
 		return i.cref, nil
 	}
 
+	i.log("SecIdentityCopyCertificate i.ref %v", i.ref)
+
 	var certRef C.SecCertificateRef
 	if err := osStatusError(C.SecIdentityCopyCertificate(i.ref, &certRef)); err != nil {
+		i.log("error getting certificate ref %v", err)
 		return nilSecCertificateRef, err
 	}
 
+	i.log("got certificate ref %v", certRef)
 	i.cref = certRef
 
 	return i.cref, nil
