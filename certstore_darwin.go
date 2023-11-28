@@ -294,7 +294,7 @@ func (i *macIdentity) CertificateChain() ([]*x509.Certificate, error) {
 
 	for j := C.CFIndex(0); j < nchain; j++ {
 		// TODO: do we need to release these?
-		chainCertref := C.SecTrustGetCertificateAtIndex(trustRef, i)
+		chainCertref := C.SecTrustGetCertificateAtIndex(trustRef, j)
 		if chainCertref == nilSecCertificateRef {
 			return nil, errors.New("nil certificate in chain")
 		}
