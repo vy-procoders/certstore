@@ -299,7 +299,7 @@ func (i *macIdentity) CertificateChain() ([]*x509.Certificate, error) {
 			return nil, errors.New("nil certificate in chain")
 		}
 
-		chainCert, err := j.exportCertRef(chainCertref)
+		chainCert, err := i.exportCertRef(chainCertref)
 		if err != nil {
 			return nil, err
 		}
