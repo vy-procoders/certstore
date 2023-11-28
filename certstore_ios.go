@@ -1,5 +1,5 @@
-//go:build !ios
-// +build !ios
+//go:build ios
+// +build ios
 
 package certstore
 
@@ -55,15 +55,6 @@ func (s macStore) Identities() ([]Identity, error) {
 		C.CFTypeRef(C.kSecMatchLimit): C.CFTypeRef(C.kSecMatchLimitAll),
 	}
 
-	if s.location == System {
-		k, err := openKeychain("/Library/Keychains/System.keychain")
-		if err != nil {
-			return nil, err
-		}
-
-		argsMap[C.CFTypeRef(C.kSecUseKeychain)] = C.CFTypeRef(k)
-	}
-
 	query := mapToCFDictionary(argsMap)
 	if query == nilCFDictionaryRef {
 		return nil, errors.New("error creating CFDictionary")
@@ -96,51 +87,9 @@ func (s macStore) Identities() ([]Identity, error) {
 	return idents, nil
 }
 
-// The returned SecKeychainRef, if non-nil, must be released via CFRelease.
-func openKeychain(path string) (C.SecKeychainRef, error) {
-	pathName := C.CString(path)
-	defer C.free(unsafe.Pointer(pathName))
-
-	var kref C.SecKeychainRef
-	if err := osStatusError(C.SecKeychainOpen(pathName, &kref)); err != nil {
-		return kref, err
-	}
-
-	return kref, nil
-}
-
 // Import implements the Store interface.
 func (s macStore) Import(data []byte, password string) error {
-	cdata, err := bytesToCFData(data)
-	if err != nil {
-		return err
-	}
-	defer C.CFRelease(C.CFTypeRef(cdata))
-
-	cpass := stringToCFString(password)
-	defer C.CFRelease(C.CFTypeRef(cpass))
-
-	access, err := createAccess("")
-	if err != nil {
-		return err
-	}
-
-	cops := mapToCFDictionary(map[C.CFTypeRef]C.CFTypeRef{
-		C.CFTypeRef(C.kSecImportExportPassphrase): C.CFTypeRef(cpass),
-		C.CFTypeRef(C.kSecImportExportAccess):     C.CFTypeRef(access),
-	})
-	if cops == nilCFDictionaryRef {
-		return errors.New("error creating CFDictionary")
-	}
-	defer C.CFRelease(C.CFTypeRef(cops))
-
-	var cret C.CFArrayRef
-	if err := osStatusError(C.SecPKCS12Import(cdata, cops, &cret)); err != nil {
-		return err
-	}
-	defer C.CFRelease(C.CFTypeRef(cret))
-
-	return nil
+	return errors.New("import is not supported on iOS")
 }
 
 // Close implements the Store interface.
@@ -209,58 +158,6 @@ func (i *macIdentity) Certificate() (*x509.Certificate, error) {
 	i.crt = crt
 
 	return i.crt, nil
-}
-
-// The returned SecAccessRef, if non-nil, must be released via CFRelease.
-func createAccess(label string, trustedApplications ...string) (access C.SecAccessRef, err error) {
-	if len(trustedApplications) == 0 {
-		return
-	}
-
-	// Always prepend with empty string which signifies that we
-	// include a NULL application, which means ourselves.
-	trustedApplications = append([]string{""}, trustedApplications...)
-
-	labelRef := stringToCFString(label)
-
-	var trustedApplicationsRefs []C.CFTypeRef
-	var trustedApplicationRef C.CFTypeRef
-	for _, trustedApplication := range trustedApplications {
-		trustedApplicationRef, err = createTrustedApplication(trustedApplication)
-		if err != nil {
-			return
-		}
-		defer C.CFRelease(C.CFTypeRef(trustedApplicationRef))
-		trustedApplicationsRefs = append(trustedApplicationsRefs, trustedApplicationRef)
-	}
-
-	trustedApplicationsArray := ArrayToCFArray(trustedApplicationsRefs)
-	defer C.CFRelease(C.CFTypeRef(trustedApplicationsArray))
-	errCode := C.SecAccessCreate(labelRef, trustedApplicationsArray, &access)
-	err = osStatusError(errCode)
-	if err != nil {
-		return
-	}
-
-	return access, nil
-}
-
-// The returned SecTrustedApplicationRef, if non-nil, must be released via CFRelease.
-func createTrustedApplication(trustedApplication string) (C.CFTypeRef, error) {
-	var trustedApplicationCStr *C.char
-	if trustedApplication != "" {
-		trustedApplicationCStr = C.CString(trustedApplication)
-		defer C.free(unsafe.Pointer(trustedApplicationCStr))
-	}
-
-	var trustedApplicationRef C.SecTrustedApplicationRef
-	errCode := C.SecTrustedApplicationCreateFromPath(trustedApplicationCStr, &trustedApplicationRef)
-	err := osStatusError(errCode)
-	if err != nil {
-		return nilCFTypeRef, err
-	}
-
-	return C.CFTypeRef(trustedApplicationRef), nil
 }
 
 // CertificateChain implements the Identity interface.
