@@ -50,6 +50,9 @@ type Store interface {
 
 	// Close closes the store.
 	Close()
+
+	// SetLogger sets the logger for the store.
+	SetLogger(logger Logger)
 }
 
 // Identity is a X.509 certificate and its corresponding private key.

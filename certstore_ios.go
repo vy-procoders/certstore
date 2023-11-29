@@ -40,11 +40,22 @@ var (
 // windows, so we provide those methods here too.
 type macStore struct {
 	location StoreLocation
+	logger   Logger
 }
 
 // openStore is a function for opening a macStore.
 func openStore(location StoreLocation, _ ...StorePermission) (macStore, error) {
-	return macStore{location}, nil
+	return macStore{location: location}, nil
+}
+
+func (s macStore) SetLogger(logger Logger) {
+	s.logger = logger
+}
+
+func (s macStore) log(format string, args ...interface{}) {
+	if s.logger != nil {
+		s.logger.Infof(format, args...)
+	}
 }
 
 // Identities implements the Store interface.
@@ -63,6 +74,7 @@ func (s macStore) Identities() ([]Identity, error) {
 
 	var absResult C.CFTypeRef
 	if err := osStatusError(C.SecItemCopyMatching(query, &absResult)); err != nil {
+		s.log("[cs] error getting identities: %v", err)
 		if err == errSecItemNotFound {
 			return []Identity{}, nil
 		}
@@ -80,7 +92,9 @@ func (s macStore) Identities() ([]Identity, error) {
 	C.CFArrayGetValues(aryResult, C.CFRange{0, n}, (*unsafe.Pointer)(unsafe.Pointer(&identRefs[0])))
 
 	idents := make([]Identity, 0, n)
+	s.log("[cs] found %d identities", n)
 	for _, identRef := range identRefs {
+		s.log("[cs] appending identity %v", identRef)
 		idents = append(idents, newMacIdentity(C.SecIdentityRef(identRef)))
 	}
 
@@ -108,7 +122,10 @@ func (s macStore) Import(data []byte, password string) error {
 
 	var cret C.CFArrayRef
 	if err := osStatusError(C.SecPKCS12Import(cdata, cops, &cret)); err != nil {
-		return err
+		s.log("[cs] importing error %v", err)
+		if err != errSecDuplicateItem {
+			return err
+		}
 	}
 	defer C.CFRelease(C.CFTypeRef(cret))
 
@@ -557,7 +574,8 @@ func bytesToCFData(gobytes []byte) (C.CFDataRef, error) {
 type osStatus C.OSStatus
 
 const (
-	errSecItemNotFound = osStatus(C.errSecItemNotFound)
+	errSecItemNotFound  = osStatus(C.errSecItemNotFound)
+	errSecDuplicateItem = osStatus(C.errSecDuplicateItem)
 )
 
 // osStatusError returns an error for an OSStatus unless it is errSecSuccess.
