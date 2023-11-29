@@ -61,9 +61,9 @@ func (s macStore) log(format string, args ...interface{}) {
 // Identities implements the Store interface.
 func (s macStore) Identities() ([]Identity, error) {
 	argsMap := map[C.CFTypeRef]C.CFTypeRef{
-		C.CFTypeRef(C.kSecClass):               C.CFTypeRef(C.kSecClassIdentity),
-		C.CFTypeRef(C.kSecReturnPersistentRef): C.CFTypeRef(C.kCFBooleanTrue),
-		C.CFTypeRef(C.kSecMatchLimit):          C.CFTypeRef(C.kSecMatchLimitAll),
+		C.CFTypeRef(C.kSecClass):      C.CFTypeRef(C.kSecClassIdentity),
+		C.CFTypeRef(C.kSecReturnRef):  C.CFTypeRef(C.kCFBooleanTrue),
+		C.CFTypeRef(C.kSecMatchLimit): C.CFTypeRef(C.kSecMatchLimitAll),
 	}
 
 	query := mapToCFDictionary(argsMap)
