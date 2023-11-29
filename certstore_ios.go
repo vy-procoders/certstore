@@ -40,44 +40,29 @@ var (
 // windows, so we provide those methods here too.
 type macStore struct {
 	location StoreLocation
-
-	logger Logger
 }
 
 // openStore is a function for opening a macStore.
 func openStore(location StoreLocation, _ ...StorePermission) (macStore, error) {
-	return macStore{location: location}, nil
-}
-
-func (s macStore) SetLogger(logger Logger) {
-	s.logger = logger
-}
-
-func (s macStore) log(format string, args ...interface{}) {
-	if s.logger != nil {
-		s.logger.Infof(format, args...)
-	}
+	return macStore{location}, nil
 }
 
 // Identities implements the Store interface.
 func (s macStore) Identities() ([]Identity, error) {
-	s.log("getting identities for store %v", s)
 	argsMap := map[C.CFTypeRef]C.CFTypeRef{
-		C.CFTypeRef(C.kSecClass):      C.CFTypeRef(C.kSecClassIdentity),
-		C.CFTypeRef(C.kSecReturnRef):  C.CFTypeRef(C.kCFBooleanTrue),
-		C.CFTypeRef(C.kSecMatchLimit): C.CFTypeRef(C.kSecMatchLimitAll),
+		C.CFTypeRef(C.kSecClass):               C.CFTypeRef(C.kSecClassIdentity),
+		C.CFTypeRef(C.kSecReturnPersistentRef): C.CFTypeRef(C.kCFBooleanTrue),
+		C.CFTypeRef(C.kSecMatchLimit):          C.CFTypeRef(C.kSecMatchLimitAll),
 	}
 
 	query := mapToCFDictionary(argsMap)
 	if query == nilCFDictionaryRef {
-		s.log("error creating CFDictionary for query")
 		return nil, errors.New("error creating CFDictionary")
 	}
 	defer C.CFRelease(C.CFTypeRef(query))
 
 	var absResult C.CFTypeRef
 	if err := osStatusError(C.SecItemCopyMatching(query, &absResult)); err != nil {
-		s.log("error getting identities: %v", err)
 		if err == errSecItemNotFound {
 			return []Identity{}, nil
 		}
@@ -94,10 +79,8 @@ func (s macStore) Identities() ([]Identity, error) {
 	identRefs := make([]C.CFTypeRef, n)
 	C.CFArrayGetValues(aryResult, C.CFRange{0, n}, (*unsafe.Pointer)(unsafe.Pointer(&identRefs[0])))
 
-	s.log("got %d identities", n)
 	idents := make([]Identity, 0, n)
 	for _, identRef := range identRefs {
-		s.log("creating identity for identRef %v", identRef)
 		idents = append(idents, newMacIdentity(C.SecIdentityRef(identRef)))
 	}
 

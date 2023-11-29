@@ -47,8 +47,6 @@ func openStore(location StoreLocation, _ ...StorePermission) (macStore, error) {
 	return macStore{location}, nil
 }
 
-func (s macStore) SetLogger(logger Logger) {}
-
 // Identities implements the Store interface.
 func (s macStore) Identities() ([]Identity, error) {
 	argsMap := map[C.CFTypeRef]C.CFTypeRef{
